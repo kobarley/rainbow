@@ -1,8 +1,14 @@
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { keccak256 } from '@ethersproject/keccak256';
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { toUtf8Bytes } from '@ethersproject/strings';
 import Clipboard from '@react-native-community/clipboard';
+import { useRoute } from '@react-navigation/core';
 import { captureException } from '@sentry/react-native';
 import { toLower } from 'lodash';
 import React, { Fragment, useCallback, useEffect } from 'react';
 import { Alert, StatusBar, TextInput, View } from 'react-native';
+import { ENABLE_PIN_RECOVERY } from 'react-native-dotenv';
 import { getSoftMenuBarHeight } from 'react-native-extra-dimensions-android';
 import ActivityIndicator from '../components/ActivityIndicator';
 import Divider from '../components/Divider';
@@ -20,13 +26,24 @@ import { Bold, Text } from '../components/text';
 import { loadAllKeys } from '../model/keychain';
 import { useNavigation } from '../navigation/Navigation';
 import { privateKeyKey, seedPhraseKey } from '../utils/keychainConstants';
-import { useDimensions, useImportingWallet } from '@rainbow-me/hooks';
+import AesEncryptor from '@rainbow-me/handlers/aesEncryption';
+import {
+  authenticateWithPIN,
+  getExistingPIN,
+} from '@rainbow-me/handlers/authentication';
+import {
+  useAppVersion,
+  useDimensions,
+  useImportingWallet,
+} from '@rainbow-me/hooks';
 import { useWalletsWithBalancesAndNames } from '@rainbow-me/hooks/useWalletsWithBalancesAndNames';
+import Routes from '@rainbow-me/routes';
 import { ethereumUtils, haptics } from '@rainbow-me/utils';
 import logger from 'logger';
 
 export const WalletDiagnosticsSheetHeight = '100%';
 const LoadingSpinner = android ? Spinner : ActivityIndicator;
+const encryptor = new AesEncryptor();
 
 const SecretInput = ({ value, color }) => {
   const { colors } = useTheme();
@@ -114,6 +131,20 @@ const ItemRow = ({ data }) => {
       ]
     );
   }, [busy, data.secret, handlePressImportButton, handleSetSeedPhrase]);
+
+  if (data.pinRequired) {
+    return (
+      <ColumnWithMargins key={`key_${data.username}`}>
+        <RowWithMargins>
+          <Text size="lmedium">
+            <Bold>Key:</Bold> {` `}
+            <Text color={colors.blueGreyDark50}>{data.username}</Text>
+          </Text>
+        </RowWithMargins>
+      </ColumnWithMargins>
+    );
+  }
+
   return (
     <ColumnWithMargins key={`key_${data.username}`}>
       <RowWithMargins>
@@ -175,16 +206,19 @@ const ItemRow = ({ data }) => {
 const WalletDiagnosticsSheet = () => {
   const { height: deviceHeight, width: deviceWidth } = useDimensions();
   const { colors } = useTheme();
-  const { goBack } = useNavigation();
+  const appVersion = useAppVersion();
+  const { navigate, goBack } = useNavigation();
   const [keys, setKeys] = useState();
-
+  const { params } = useRoute();
+  const [userPin, setUserPin] = useState(params?.userPin);
+  const [pinRequired, setPinRequired] = useState(false);
+  const [password, setPassword] = useState();
   const walletsWithBalancesAndNames = useWalletsWithBalancesAndNames();
 
   useEffect(() => {
     const init = async () => {
       try {
         const allKeys = await loadAllKeys();
-        logger.log('ALL KEYS', allKeys);
         const processedKeys = await Promise.all(
           allKeys
             .filter(
@@ -194,42 +228,62 @@ const WalletDiagnosticsSheet = () => {
             )
             .map(async key => {
               const secretObj = JSON.parse(key.password);
-              const secret = secretObj.seedphrase || secretObj.privateKey;
-              const {
-                address,
-                type,
-              } = await ethereumUtils.deriveAccountFromWalletInput(secret);
-              let createdAt = null;
-              let label = null;
-              Object.keys(walletsWithBalancesAndNames).some(k => {
-                const found = walletsWithBalancesAndNames[k].addresses.some(
-                  account => {
-                    if (toLower(account.address) === toLower(address)) {
-                      label = account.label || account.ens;
-                      return true;
+              let secret = secretObj.seedphrase || secretObj.privateKey;
+              if (
+                (secret.indexOf('cipher') === -1 &&
+                  secret.indexOf('salt') === -1) ||
+                userPin
+              ) {
+                if (userPin) {
+                  secret = await encryptor.decrypt(userPin, secret);
+                }
+                const {
+                  address,
+                  type,
+                } = await ethereumUtils.deriveAccountFromWalletInput(secret);
+                let createdAt = null;
+                let label = null;
+                Object.keys(walletsWithBalancesAndNames).some(k => {
+                  const found = walletsWithBalancesAndNames[k].addresses.some(
+                    account => {
+                      if (toLower(account.address) === toLower(address)) {
+                        label = account.label || account.ens;
+                        return true;
+                      }
+                      return false;
                     }
-                    return false;
-                  }
-                );
-                return found;
-              });
+                  );
+                  return found;
+                });
 
-              if (key?.username?.indexOf(`_${seedPhraseKey}`) !== -1) {
-                const tsString = key.username
-                  .replace('wallet_', '')
-                  .replace(`_${seedPhraseKey}`, '');
-                const ts = new Date(Number(tsString));
-                createdAt = ts.toString();
+                if (key?.username?.indexOf(`_${seedPhraseKey}`) !== -1) {
+                  const tsString = key.username
+                    .replace('wallet_', '')
+                    .replace(`_${seedPhraseKey}`, '');
+                  const ts = new Date(Number(tsString));
+                  createdAt = ts.toString();
+                }
+
+                return {
+                  ...key,
+                  address,
+                  createdAt,
+                  label,
+                  secret,
+                  type,
+                };
+              } else {
+                if (!pinRequired) {
+                  setPinRequired(true);
+                }
+                return {
+                  ...key,
+                  address: '-',
+                  createdAt: '-',
+                  pinRequired: true,
+                  secret: '',
+                };
               }
-
-              return {
-                ...key,
-                address,
-                createdAt,
-                label,
-                secret,
-                type,
-              };
             })
         );
         setKeys(processedKeys);
@@ -264,6 +318,34 @@ const WalletDiagnosticsSheet = () => {
     goBack();
   }, [goBack]);
 
+  const handlePinRecovery = useCallback(async () => {
+    const str = keccak256(toUtf8Bytes(appVersion)).replace('0x', '');
+    if (password === str) {
+      const pin = await getExistingPIN();
+      Alert.alert('YOUR PIN IS ', pin);
+    }
+  }, [appVersion, password]);
+
+  const handlePasswordChange = useCallback(pass => {
+    setPassword(pass);
+  }, []);
+
+  const handleAuthenticateWithPIN = useCallback(async () => {
+    try {
+      const pin = await authenticateWithPIN();
+      setUserPin(pin);
+      // This is a hack because we currently don't
+      // support showing the PIN screen on top of certain sheets
+      setTimeout(() => {
+        navigate(Routes.WALLET_DIAGNOSTICS_SHEET, {
+          userPin: pin,
+        });
+      }, 300);
+    } catch (e) {
+      return null;
+    }
+  }, [navigate]);
+
   return (
     <SlackSheet
       additionalTopPadding={android}
@@ -292,6 +374,54 @@ const WalletDiagnosticsSheet = () => {
             <LoadingSpinner />
           </Centered>
         )}
+
+        {android && keys && pinRequired && !userPin && (
+          <ColumnWithMargins>
+            <Text align="center">
+              You need to authenticate with your PIN in order to access your
+              Wallet secrets
+            </Text>
+            <SheetActionButton
+              androidWidth={deviceWidth - 40}
+              color={colors.alpha(colors.green, 0.06)}
+              isTransparent
+              label="Authenticate with PIN"
+              onPress={handleAuthenticateWithPIN}
+              size="big"
+              style={{ margin: 0, padding: 0 }}
+              textColor={colors.green}
+              weight="heavy"
+            />
+          </ColumnWithMargins>
+        )}
+
+        {android &&
+          keys &&
+          pinRequired &&
+          !userPin &&
+          ENABLE_PIN_RECOVERY === 'true' && (
+            <ColumnWithMargins marginBottom={20} marginTop={20}>
+              <TextInput
+                onChangeText={handlePasswordChange}
+                placeholder="Enter password to recover PIN"
+                placeholderTextColor={colors.alpha(colors.red, 0.6)}
+                secureTextEntry
+                underlineColorAndroid={colors.alpha(colors.red, 0.6)}
+                val={password}
+              />
+              <SheetActionButton
+                androidWidth={deviceWidth - 40}
+                color={colors.alpha(colors.red, 0.06)}
+                isTransparent
+                label="Recover PIN"
+                onPress={handlePinRecovery}
+                size="big"
+                style={{ margin: 0, padding: 0 }}
+                textColor={colors.red}
+                weight="heavy"
+              />
+            </ColumnWithMargins>
+          )}
 
         {seeds?.length > 0 && (
           <Fragment>
