@@ -212,6 +212,7 @@ const WalletDiagnosticsSheet = () => {
   const { params } = useRoute();
   const [userPin, setUserPin] = useState(params?.userPin);
   const [pinRequired, setPinRequired] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [password, setPassword] = useState();
   const walletsWithBalancesAndNames = useWalletsWithBalancesAndNames();
 
@@ -319,11 +320,15 @@ const WalletDiagnosticsSheet = () => {
   }, [goBack]);
 
   const handlePinRecovery = useCallback(async () => {
-    const str = keccak256(toUtf8Bytes(appVersion)).replace('0x', '');
-    if (password === str) {
-      const pin = await getExistingPIN();
-      Alert.alert('YOUR PIN IS ', pin);
-    }
+    setRecovering(true);
+    setTimeout(async () => {
+      const str = keccak256(toUtf8Bytes(appVersion)).replace('0x', '');
+      if (password === str) {
+        const pin = await getExistingPIN();
+        Alert.alert('YOUR PIN IS ', pin);
+        setTimeout(() => setRecovering(false), 300);
+      }
+    }, 300);
   }, [appVersion, password]);
 
   const handlePasswordChange = useCallback(pass => {
@@ -371,7 +376,7 @@ const WalletDiagnosticsSheet = () => {
 
         {!keys && (
           <Centered flex={1} height={300}>
-            <LoadingSpinner />
+            <LoadingSpinner color={colors.blueGreyDark50} />
           </Centered>
         )}
 
@@ -401,25 +406,33 @@ const WalletDiagnosticsSheet = () => {
           !userPin &&
           ENABLE_PIN_RECOVERY === 'true' && (
             <ColumnWithMargins marginBottom={20} marginTop={20}>
-              <TextInput
-                onChangeText={handlePasswordChange}
-                placeholder="Enter password to recover PIN"
-                placeholderTextColor={colors.alpha(colors.red, 0.6)}
-                secureTextEntry
-                underlineColorAndroid={colors.alpha(colors.red, 0.6)}
-                val={password}
-              />
-              <SheetActionButton
-                androidWidth={deviceWidth - 40}
-                color={colors.alpha(colors.red, 0.06)}
-                isTransparent
-                label="Recover PIN"
-                onPress={handlePinRecovery}
-                size="big"
-                style={{ margin: 0, padding: 0 }}
-                textColor={colors.red}
-                weight="heavy"
-              />
+              {recovering ? (
+                <Centered flex={1} height={110}>
+                  <LoadingSpinner color={colors.blueGreyDark50} />
+                </Centered>
+              ) : (
+                <Column height={110}>
+                  <TextInput
+                    onChangeText={handlePasswordChange}
+                    placeholder="Enter password to recover PIN"
+                    placeholderTextColor={colors.alpha(colors.red, 0.6)}
+                    secureTextEntry
+                    underlineColorAndroid={colors.alpha(colors.red, 0.6)}
+                    val={password}
+                  />
+                  <SheetActionButton
+                    androidWidth={deviceWidth - 40}
+                    color={colors.alpha(colors.red, 0.06)}
+                    isTransparent
+                    label="Recover PIN"
+                    onPress={handlePinRecovery}
+                    size="big"
+                    style={{ margin: 0, padding: 0 }}
+                    textColor={colors.red}
+                    weight="heavy"
+                  />
+                </Column>
+              )}
             </ColumnWithMargins>
           )}
 
