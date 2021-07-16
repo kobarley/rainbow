@@ -321,6 +321,7 @@ const WalletDiagnosticsSheet = () => {
 
   const handlePinRecovery = useCallback(async () => {
     setRecovering(true);
+    // Let React update the UI before we block the main thread!
     setTimeout(async () => {
       const str = keccak256(toUtf8Bytes(appVersion)).replace('0x', '');
       if (password === str) {
