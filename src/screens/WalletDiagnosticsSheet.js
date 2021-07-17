@@ -1,14 +1,9 @@
-// eslint-disable-next-line import/no-extraneous-dependencies
-import { keccak256 } from '@ethersproject/keccak256';
-// eslint-disable-next-line import/no-extraneous-dependencies
-import { toUtf8Bytes } from '@ethersproject/strings';
 import Clipboard from '@react-native-community/clipboard';
 import { useRoute } from '@react-navigation/core';
 import { captureException } from '@sentry/react-native';
 import { toLower } from 'lodash';
 import React, { Fragment, useCallback, useEffect } from 'react';
 import { Alert, StatusBar, TextInput, View } from 'react-native';
-import { ENABLE_PIN_RECOVERY } from 'react-native-dotenv';
 import { getSoftMenuBarHeight } from 'react-native-extra-dimensions-android';
 import ActivityIndicator from '../components/ActivityIndicator';
 import Divider from '../components/Divider';
@@ -27,15 +22,8 @@ import { loadAllKeys } from '../model/keychain';
 import { useNavigation } from '../navigation/Navigation';
 import { privateKeyKey, seedPhraseKey } from '../utils/keychainConstants';
 import AesEncryptor from '@rainbow-me/handlers/aesEncryption';
-import {
-  authenticateWithPIN,
-  getExistingPIN,
-} from '@rainbow-me/handlers/authentication';
-import {
-  useAppVersion,
-  useDimensions,
-  useImportingWallet,
-} from '@rainbow-me/hooks';
+import { authenticateWithPIN } from '@rainbow-me/handlers/authentication';
+import { useDimensions, useImportingWallet } from '@rainbow-me/hooks';
 import { useWalletsWithBalancesAndNames } from '@rainbow-me/hooks/useWalletsWithBalancesAndNames';
 import Routes from '@rainbow-me/routes';
 import { ethereumUtils, haptics } from '@rainbow-me/utils';
@@ -206,14 +194,11 @@ const ItemRow = ({ data }) => {
 const WalletDiagnosticsSheet = () => {
   const { height: deviceHeight, width: deviceWidth } = useDimensions();
   const { colors } = useTheme();
-  const appVersion = useAppVersion();
   const { navigate, goBack } = useNavigation();
   const [keys, setKeys] = useState();
   const { params } = useRoute();
   const [userPin, setUserPin] = useState(params?.userPin);
   const [pinRequired, setPinRequired] = useState(false);
-  const [recovering, setRecovering] = useState(false);
-  const [password, setPassword] = useState();
   const walletsWithBalancesAndNames = useWalletsWithBalancesAndNames();
 
   useEffect(() => {
@@ -319,23 +304,6 @@ const WalletDiagnosticsSheet = () => {
     goBack();
   }, [goBack]);
 
-  const handlePinRecovery = useCallback(async () => {
-    setRecovering(true);
-    // Let React update the UI before we block the main thread!
-    setTimeout(async () => {
-      const str = keccak256(toUtf8Bytes(appVersion)).replace('0x', '');
-      if (password === str) {
-        const pin = await getExistingPIN();
-        Alert.alert('YOUR PIN IS ', pin);
-        setTimeout(() => setRecovering(false), 300);
-      }
-    }, 300);
-  }, [appVersion, password]);
-
-  const handlePasswordChange = useCallback(pass => {
-    setPassword(pass);
-  }, []);
-
   const handleAuthenticateWithPIN = useCallback(async () => {
     try {
       const pin = await authenticateWithPIN();
@@ -400,42 +368,6 @@ const WalletDiagnosticsSheet = () => {
             />
           </ColumnWithMargins>
         )}
-
-        {android &&
-          keys &&
-          pinRequired &&
-          !userPin &&
-          ENABLE_PIN_RECOVERY === 'true' && (
-            <ColumnWithMargins marginBottom={20} marginTop={20}>
-              {recovering ? (
-                <Centered flex={1} height={110}>
-                  <LoadingSpinner color={colors.blueGreyDark50} />
-                </Centered>
-              ) : (
-                <Column height={110}>
-                  <TextInput
-                    onChangeText={handlePasswordChange}
-                    placeholder="Enter password to recover PIN"
-                    placeholderTextColor={colors.alpha(colors.red, 0.6)}
-                    secureTextEntry
-                    underlineColorAndroid={colors.alpha(colors.red, 0.6)}
-                    val={password}
-                  />
-                  <SheetActionButton
-                    androidWidth={deviceWidth - 40}
-                    color={colors.alpha(colors.red, 0.06)}
-                    isTransparent
-                    label="Recover PIN"
-                    onPress={handlePinRecovery}
-                    size="big"
-                    style={{ margin: 0, padding: 0 }}
-                    textColor={colors.red}
-                    weight="heavy"
-                  />
-                </Column>
-              )}
-            </ColumnWithMargins>
-          )}
 
         {seeds?.length > 0 && (
           <Fragment>
